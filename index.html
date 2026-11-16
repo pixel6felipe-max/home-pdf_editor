@@ -60,8 +60,26 @@
             overflow: visible;
         }
 
-        .editable-text-box {
+        /* Container posicionado de cada bloco de texto */
+        .text-block-wrapper {
             position: absolute;
+            z-index: 10;
+        }
+
+        .text-block-wrapper.selected,
+        .text-block-wrapper:hover {
+            z-index: 30;
+        }
+
+        /* Máscara visual para esconder o texto original do canvas quando movido */
+        .original-cover-mask {
+            position: absolute;
+            pointer-events: none;
+            z-index: 5;
+        }
+
+        .editable-text-box {
+            position: relative;
             cursor: text;
             border: 1px dashed transparent;
             border-radius: 3px;
@@ -72,7 +90,6 @@
             outline: none;
             transition: border-color 0.15s, background-color 0.15s, box-shadow 0.15s;
             user-select: text;
-            z-index: 10;
         }
 
         /* Modo de edição ativo: mostra contornos sutis ao passar o mouse */
@@ -83,11 +100,10 @@
 
         /* Caixa atualmente selecionada / em edição */
         .editable-text-box:focus,
-        .editable-text-box.selected {
+        .text-block-wrapper.selected .editable-text-box {
             border: 1.5px solid #2563eb !important;
             background-color: #ffffff !important;
             box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
-            z-index: 30;
         }
 
         /* Caixa que já foi modificada pelo usuário */
@@ -97,32 +113,39 @@
         }
 
         /* Modo visualização: esconde bordas e desabilita edição */
-        .mode-view .editable-text-box {
+        .mode-view .text-block-wrapper {
             pointer-events: none;
-            border-color: transparent !important;
         }
-        .mode-view .editable-text-box.modified {
-        /* Alça de arraste para qualquer caixa de texto selecionada */
+        .mode-view .editable-text-box {
+            border-color: transparent !important;
+            box-shadow: none !important;
+        }
+
+        /* Alça de arraste externa (fora do contenteditable para não sujar o texto) */
         .drag-handle {
             position: absolute;
-            top: -20px;
-            left: -1px;
+            top: -21px;
+            left: -2px;
             background: #2563eb;
             color: white;
             font-size: 10px;
             font-weight: 600;
-            padding: 1px 7px;
+            padding: 2px 7px;
             border-radius: 4px 4px 0 0;
-            cursor: move;
+            cursor: grab;
             display: none;
             align-items: center;
-            gap: 3px;
+            gap: 4px;
             user-select: none;
             white-space: nowrap;
             box-shadow: 0 -2px 6px rgba(37, 99, 235, 0.2);
+            z-index: 40;
         }
-        .mode-edit .editable-text-box.selected .drag-handle,
-        .mode-edit .editable-text-box:hover .drag-handle {
+        .drag-handle:active {
+            cursor: grabbing;
+        }
+        .mode-edit .text-block-wrapper.selected .drag-handle,
+        .mode-edit .text-block-wrapper:hover .drag-handle {
             display: flex;
         }
     </style>
@@ -616,44 +639,59 @@
             pageState.blocks.forEach(block => {
                 if (block.isDeleted) return;
 
+                // Se um texto original foi movido, cria uma máscara na posição antiga para ocultá-lo visualmente
+                const wasMoved = !block.isCustom && (Math.abs(block.x - block.originalX) > 0.5 || Math.abs(block.y - block.originalY) > 0.5);
+                if (wasMoved) {
+                    const mask = document.createElement('div');
+                    mask.className = 'original-cover-mask';
+                    mask.id = `mask_${block.id}`;
+                    mask.style.left = `${(block.originalX - 1) * state.scale}px`;
+                    mask.style.top = `${block.originalY * state.scale}px`;
+                    mask.style.width = `${Math.max(block.width + 4, block.originalText.length * block.originalFontSize * 0.55) * state.scale}px`;
+                    mask.style.height = `${(block.height + 2) * state.scale}px`;
+                    mask.style.backgroundColor = block.bgColor;
+                    container.appendChild(mask);
+                }
+
+                // Wrapper externo que agrupa a alça de arraste e a caixa de texto separadamente
+                const wrapper = document.createElement('div');
+                wrapper.className = 'text-block-wrapper';
+                wrapper.id = `wrap_${block.id}`;
+                if (state.selectedBlockId === block.id) wrapper.classList.add('selected');
+                wrapper.style.left = `${block.x * state.scale}px`;
+                wrapper.style.top = `${block.y * state.scale}px`;
+
+                // Alça de movimentação externa (não entra dentro do texto editável!)
+                const handle = document.createElement('div');
+                handle.className = 'drag-handle';
+                handle.innerHTML = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="5 9 2 12 5 15"></polyline><polyline points="9 5 12 2 15 5"></polyline><polyline points="15 19 12 22 9 19"></polyline><polyline points="19 9 22 12 19 15"></polyline><line x1="2" y1="12" x2="22" y2="12"></line><line x1="12" y1="2" x2="12" y2="22"></line></svg><span>Arrastar</span>`;
+                setupDragBehavior(handle, wrapper, block, container);
+
+                // Caixa de texto pura (contém SOMENTE os caracteres do documento)
                 const el = document.createElement('div');
                 el.className = 'editable-text-box';
                 if (block.isModified) el.classList.add('modified');
                 if (block.isCustom) el.classList.add('is-custom');
-                if (state.selectedBlockId === block.id) el.classList.add('selected');
 
                 el.id = `dom_${block.id}`;
                 el.contentEditable = (state.mode === 'edit');
                 el.spellcheck = false;
 
-                // Posicionamento e tipografia escalonados
-                el.style.left = `${block.x * state.scale}px`;
-                el.style.top = `${block.y * state.scale}px`;
                 el.style.minWidth = `${Math.max(block.width * state.scale, 16)}px`;
                 el.style.minHeight = `${block.height * state.scale}px`;
                 el.style.fontSize = `${block.fontSize * state.scale}px`;
                 el.style.fontWeight = block.isBold ? '700' : '400';
                 el.style.color = block.isModified || block.isCustom ? block.color : 'transparent';
 
-                // Se foi modificado, exibe o texto editado com fundo sólido para cobrir o original do canvas
                 if (block.isModified || block.isCustom) {
                     el.style.backgroundColor = block.isCustom ? 'transparent' : block.bgColor;
                 }
 
                 el.textContent = block.text;
 
-                // Adicionar alça de movimentação em todos os blocos para permitir arrastar livremente
-                const handle = document.createElement('div');
-                handle.className = 'drag-handle';
-                handle.contentEditable = 'false';
-                handle.innerHTML = '✥ Mover';
-                setupDragBehavior(handle, el, block);
-                el.appendChild(handle);
-
                 // Eventos de interação
                 el.addEventListener('focus', () => {
                     selectBlock(block.id);
-                    // Ao focar, revelar a cor real do texto e fundo para edição nítida
                     el.style.color = block.color;
                     if (!block.isCustom) {
                         el.style.backgroundColor = block.bgColor;
@@ -661,14 +699,7 @@
                 });
 
                 el.addEventListener('input', () => {
-                    // Capturar apenas o texto (ignorando o texto da alça .drag-handle se houver)
-                    let newText = '';
-                    el.childNodes.forEach(node => {
-                        if (node.nodeType === Node.TEXT_NODE) {
-                            newText += node.textContent;
-                        }
-                    });
-                    block.text = newText;
+                    block.text = el.innerText.replace(/\n$/, '');
                     block.isModified = true;
                     el.classList.add('modified');
                     if (!block.isCustom) {
@@ -677,14 +708,15 @@
                 });
 
                 el.addEventListener('blur', () => {
-                    // Se não foi modificado, volta a ficar transparente para mostrar a renderização original nítida
                     if (!block.isModified && !block.isCustom) {
                         el.style.color = 'transparent';
                         el.style.backgroundColor = 'transparent';
                     }
                 });
 
-                container.appendChild(el);
+                wrapper.appendChild(handle);
+                wrapper.appendChild(el);
+                container.appendChild(wrapper);
             });
         }
 
@@ -696,10 +728,10 @@
             state.selectedBlockId = blockId;
 
             const block = findBlockById(blockId);
-            const domEl = document.getElementById(`dom_${blockId}`);
-            if (!block || !domEl) return;
+            const wrapEl = document.getElementById(`wrap_${blockId}`);
+            if (!block || !wrapEl) return;
 
-            domEl.classList.add('selected');
+            wrapEl.classList.add('selected');
             formatBar.classList.remove('hidden');
 
             // Sincronizar barra de formatação com os valores do bloco selecionado
@@ -715,8 +747,8 @@
 
         function deselectAllBlocks() {
             if (state.selectedBlockId) {
-                const prevDom = document.getElementById(`dom_${state.selectedBlockId}`);
-                if (prevDom) prevDom.classList.remove('selected');
+                const prevWrap = document.getElementById(`wrap_${state.selectedBlockId}`);
+                if (prevWrap) prevWrap.classList.remove('selected');
             }
             state.selectedBlockId = null;
             formatBar.classList.add('hidden');
@@ -760,6 +792,7 @@
         document.getElementById('fmt-bg-color').addEventListener('input', (e) => {
             const block = findBlockById(state.selectedBlockId);
             const domEl = document.getElementById(`dom_${state.selectedBlockId}`);
+            const maskEl = document.getElementById(`mask_${state.selectedBlockId}`);
             if (!block || !domEl) return;
 
             block.bgColor = e.target.value;
@@ -767,6 +800,7 @@
             domEl.style.backgroundColor = block.bgColor;
             domEl.style.color = block.color;
             domEl.classList.add('modified');
+            if (maskEl) maskEl.style.backgroundColor = block.bgColor;
         });
 
         function toggleBold() {
@@ -786,7 +820,9 @@
         function resetSelectedBlock() {
             const block = findBlockById(state.selectedBlockId);
             const domEl = document.getElementById(`dom_${state.selectedBlockId}`);
-            if (!block || !domEl) return;
+            const wrapEl = document.getElementById(`wrap_${state.selectedBlockId}`);
+            const maskEl = document.getElementById(`mask_${state.selectedBlockId}`);
+            if (!block || !domEl || !wrapEl) return;
 
             if (block.isCustom) {
                 deleteSelectedBlock();
@@ -802,13 +838,11 @@
             block.bgColor = '#ffffff';
             block.isModified = false;
 
-            // Atualizar texto preservando a alça de arraste
-            const handle = domEl.querySelector('.drag-handle');
-            domEl.textContent = block.originalText;
-            if (handle) domEl.appendChild(handle);
+            if (maskEl) maskEl.remove();
 
-            domEl.style.left = `${block.x * state.scale}px`;
-            domEl.style.top = `${block.y * state.scale}px`;
+            domEl.textContent = block.originalText;
+            wrapEl.style.left = `${block.x * state.scale}px`;
+            wrapEl.style.top = `${block.y * state.scale}px`;
             domEl.style.fontSize = `${block.fontSize * state.scale}px`;
             domEl.style.fontWeight = block.isBold ? '700' : '400';
             domEl.style.color = 'transparent';
@@ -875,24 +909,23 @@
                 domEl.focus();
                 selectBlock(clonedBlock.id);
             }
-            showToast('Texto duplicado! Arraste pela alça "Mover" para posicionar.', 'success');
+            showToast('Texto duplicado! Arraste pela alça azul acima dele para posicionar.', 'success');
         }
 
         function deleteSelectedBlock() {
             const block = findBlockById(state.selectedBlockId);
             const domEl = document.getElementById(`dom_${state.selectedBlockId}`);
-            if (!block || !domEl) return;
+            const wrapEl = document.getElementById(`wrap_${state.selectedBlockId}`);
+            if (!block || !domEl || !wrapEl) return;
 
             if (block.isCustom) {
                 block.isDeleted = true;
-                domEl.remove();
+                wrapEl.remove();
             } else {
                 // Para textos originais do PDF, "apagar" significa cobrir com retângulo da cor de fundo e texto vazio
-                const handle = domEl.querySelector('.drag-handle');
                 block.text = '';
                 block.isModified = true;
                 domEl.textContent = '';
-                if (handle) domEl.appendChild(handle);
                 domEl.style.backgroundColor = block.bgColor;
                 domEl.classList.add('modified');
             }
@@ -953,17 +986,14 @@
                 domEl.focus();
                 // Selecionar o texto padrão para digitação imediata
                 const range = document.createRange();
-                const textNode = domEl.firstChild;
-                if (textNode && textNode.nodeType === Node.TEXT_NODE) {
-                    range.selectNodeContents(textNode);
-                    const sel = window.getSelection();
-                    sel.removeAllRanges();
-                    sel.addRange(range);
-                }
+                range.selectNodeContents(domEl);
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
             }
         }
 
-        function setupDragBehavior(handle, el, block) {
+        function setupDragBehavior(handle, wrapEl, block, container) {
             let isDragging = false;
             let startX, startY, origX, origY;
 
@@ -976,12 +1006,31 @@
                 origX = block.x;
                 origY = block.y;
 
-                // Se for texto original do PDF sendo movido, marca como modificado para cobrir a posição antiga
-                if (!block.isModified && !block.isCustom) {
-                    block.isModified = true;
-                    el.classList.add('modified');
-                    el.style.color = block.color;
-                    el.style.backgroundColor = block.bgColor;
+                const domEl = document.getElementById(`dom_${block.id}`);
+
+                // Se for texto original do PDF sendo movido, revela o texto e cria máscara na posição original
+                if (!block.isCustom) {
+                    if (!block.isModified) {
+                        block.isModified = true;
+                        if (domEl) {
+                            domEl.classList.add('modified');
+                            domEl.style.color = block.color;
+                            domEl.style.backgroundColor = block.bgColor;
+                        }
+                    }
+
+                    // Garante que existe uma máscara cobrindo o texto original no lugar antigo
+                    if (!document.getElementById(`mask_${block.id}`)) {
+                        const mask = document.createElement('div');
+                        mask.className = 'original-cover-mask';
+                        mask.id = `mask_${block.id}`;
+                        mask.style.left = `${(block.originalX - 1) * state.scale}px`;
+                        mask.style.top = `${block.originalY * state.scale}px`;
+                        mask.style.width = `${Math.max(block.width + 4, block.originalText.length * block.originalFontSize * 0.55) * state.scale}px`;
+                        mask.style.height = `${(block.height + 2) * state.scale}px`;
+                        mask.style.backgroundColor = block.bgColor;
+                        container.insertBefore(mask, container.firstChild);
+                    }
                 }
                 selectBlock(block.id);
 
@@ -991,8 +1040,8 @@
                     const dy = (moveEvent.clientY - startY) / state.scale;
                     block.x = origX + dx;
                     block.y = origY + dy;
-                    el.style.left = `${block.x * state.scale}px`;
-                    el.style.top = `${block.y * state.scale}px`;
+                    wrapEl.style.left = `${block.x * state.scale}px`;
+                    wrapEl.style.top = `${block.y * state.scale}px`;
                 };
 
                 const onMouseUp = () => {
