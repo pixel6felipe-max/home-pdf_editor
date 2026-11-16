@@ -102,27 +102,27 @@
             border-color: transparent !important;
         }
         .mode-view .editable-text-box.modified {
-            background-color: #ffffff;
-        }
-
-        /* Alça de arraste para novas caixas de texto */
+        /* Alça de arraste para qualquer caixa de texto selecionada */
         .drag-handle {
             position: absolute;
-            top: -18px;
+            top: -20px;
             left: -1px;
             background: #2563eb;
             color: white;
             font-size: 10px;
-            padding: 1px 6px;
+            font-weight: 600;
+            padding: 1px 7px;
             border-radius: 4px 4px 0 0;
             cursor: move;
             display: none;
             align-items: center;
-            gap: 2px;
+            gap: 3px;
             user-select: none;
+            white-space: nowrap;
+            box-shadow: 0 -2px 6px rgba(37, 99, 235, 0.2);
         }
-        .editable-text-box.is-custom.selected .drag-handle,
-        .editable-text-box.is-custom:hover .drag-handle {
+        .mode-edit .editable-text-box.selected .drag-handle,
+        .mode-edit .editable-text-box:hover .drag-handle {
             display: flex;
         }
     </style>
@@ -231,6 +231,19 @@
                 <input type="color" id="fmt-bg-color" value="#ffffff" class="w-5 h-5 rounded cursor-pointer border-0 bg-transparent p-0">
             </label>
         </div>
+
+        <div class="h-4 w-px bg-slate-200"></div>
+
+        <!-- Copiar e Duplicar Bloco -->
+        <button id="fmt-copy" onclick="copySelectedBlockText()" title="Copiar texto para a área de transferência" class="flex items-center gap-1 px-2 py-1 rounded-md text-slate-600 hover:bg-slate-100 transition">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="copy" aria-hidden="true" class="lucide lucide-copy w-3.5 h-3.5"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>
+            <span>Copiar</span>
+        </button>
+
+        <button id="fmt-duplicate" onclick="duplicateSelectedBlock()" title="Duplicar este texto mantendo estilo e tamanho" class="flex items-center gap-1 px-2 py-1 rounded-md text-blue-600 hover:bg-blue-50 font-medium transition">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="copy-plus" aria-hidden="true" class="lucide lucide-copy-plus w-3.5 h-3.5"><line x1="15" x2="15" y1="12" y2="18"></line><line x1="12" x2="18" y1="15" y2="15"></line><rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>
+            <span>Duplicar</span>
+        </button>
 
         <div class="h-4 w-px bg-slate-200"></div>
 
@@ -549,6 +562,8 @@
                     originalText: item.str,
                     x: pdfX,
                     y: topY,
+                    originalX: pdfX,
+                    originalY: topY,
                     width: width,
                     height: fontHeight * 1.15,
                     fontSize: Math.round(fontHeight * 10) / 10,
@@ -627,15 +642,13 @@
 
                 el.textContent = block.text;
 
-                // Se for caixa personalizada, adicionar alça de movimentação
-                if (block.isCustom) {
-                    const handle = document.createElement('div');
-                    handle.className = 'drag-handle';
-                    handle.contentEditable = 'false';
-                    handle.innerHTML = '✥ Mover';
-                    setupDragBehavior(handle, el, block);
-                    el.appendChild(handle);
-                }
+                // Adicionar alça de movimentação em todos os blocos para permitir arrastar livremente
+                const handle = document.createElement('div');
+                handle.className = 'drag-handle';
+                handle.contentEditable = 'false';
+                handle.innerHTML = '✥ Mover';
+                setupDragBehavior(handle, el, block);
+                el.appendChild(handle);
 
                 // Eventos de interação
                 el.addEventListener('focus', () => {
@@ -781,20 +794,88 @@
             }
 
             block.text = block.originalText;
+            block.x = block.originalX;
+            block.y = block.originalY;
             block.fontSize = block.originalFontSize;
             block.isBold = block.originalIsBold;
             block.color = '#000000';
             block.bgColor = '#ffffff';
             block.isModified = false;
 
+            // Atualizar texto preservando a alça de arraste
+            const handle = domEl.querySelector('.drag-handle');
             domEl.textContent = block.originalText;
+            if (handle) domEl.appendChild(handle);
+
+            domEl.style.left = `${block.x * state.scale}px`;
+            domEl.style.top = `${block.y * state.scale}px`;
             domEl.style.fontSize = `${block.fontSize * state.scale}px`;
             domEl.style.fontWeight = block.isBold ? '700' : '400';
             domEl.style.color = 'transparent';
             domEl.style.backgroundColor = 'transparent';
             domEl.classList.remove('modified');
             deselectAllBlocks();
-            showToast('Bloco restaurado ao original.', 'info');
+            showToast('Bloco restaurado à posição e texto originais.', 'info');
+        }
+
+        function copySelectedBlockText() {
+            const block = findBlockById(state.selectedBlockId);
+            if (!block) return;
+
+            const tempArea = document.createElement('textarea');
+            tempArea.value = block.text;
+            tempArea.style.position = 'fixed';
+            tempArea.style.opacity = '0';
+            document.body.appendChild(tempArea);
+            tempArea.select();
+            try {
+                document.execCommand('copy');
+                showToast('Texto copiado para a área de transferência!', 'success');
+            } catch (e) {
+                showToast('Não foi possível copiar o texto.', 'error');
+            }
+            document.body.removeChild(tempArea);
+        }
+
+        function duplicateSelectedBlock() {
+            const block = findBlockById(state.selectedBlockId);
+            if (!block) return;
+
+            const pageState = state.pagesData.find(p => p.pageNum === block.pageNum);
+            if (!pageState) return;
+
+            const clonedBlock = {
+                id: `p${block.pageNum}_dup_${Date.now()}`,
+                pageNum: block.pageNum,
+                text: block.text,
+                originalText: '',
+                x: block.x + 14,
+                y: block.y + 16,
+                originalX: block.x + 14,
+                originalY: block.y + 16,
+                width: block.width,
+                height: block.height,
+                fontSize: block.fontSize,
+                originalFontSize: block.fontSize,
+                color: block.color,
+                bgColor: block.bgColor,
+                isBold: block.isBold,
+                originalIsBold: block.isBold,
+                isModified: true,
+                isDeleted: false,
+                isCustom: true
+            };
+
+            pageState.blocks.push(clonedBlock);
+            const overlay = document.querySelector(`.text-layer-overlay[data-page-num="${block.pageNum}"]`);
+            renderEditableBlocksForPage(pageState, overlay);
+
+            const domEl = document.getElementById(`dom_${clonedBlock.id}`);
+            if (domEl) {
+                domEl.focus();
+                selectBlock(clonedBlock.id);
+            }
+            showToast('Texto duplicado! Arraste pela alça "Mover" para posicionar.', 'success');
         }
 
         function deleteSelectedBlock() {
@@ -807,9 +888,11 @@
                 domEl.remove();
             } else {
                 // Para textos originais do PDF, "apagar" significa cobrir com retângulo da cor de fundo e texto vazio
+                const handle = domEl.querySelector('.drag-handle');
                 block.text = '';
                 block.isModified = true;
                 domEl.textContent = '';
+                if (handle) domEl.appendChild(handle);
                 domEl.style.backgroundColor = block.bgColor;
                 domEl.classList.add('modified');
             }
@@ -846,6 +929,8 @@
                 originalText: '',
                 x: x,
                 y: y - 8,
+                originalX: x,
+                originalY: y - 8,
                 width: 90,
                 height: 18,
                 fontSize: 14,
@@ -883,12 +968,22 @@
             let startX, startY, origX, origY;
 
             handle.addEventListener('mousedown', (e) => {
+                e.preventDefault();
                 e.stopPropagation();
                 isDragging = true;
                 startX = e.clientX;
                 startY = e.clientY;
                 origX = block.x;
                 origY = block.y;
+
+                // Se for texto original do PDF sendo movido, marca como modificado para cobrir a posição antiga
+                if (!block.isModified && !block.isCustom) {
+                    block.isModified = true;
+                    el.classList.add('modified');
+                    el.style.color = block.color;
+                    el.style.backgroundColor = block.bgColor;
+                }
+                selectBlock(block.id);
 
                 const onMouseMove = (moveEvent) => {
                     if (!isDragging) return;
@@ -1015,21 +1110,24 @@
                         // Converter coordenada Y (Top-Down da tela) para Y do pdf-lib (Bottom-Up)
                         const pdfYTop = pageHeight - block.y;
 
-                        // 1. Se não for uma caixa nova, apagar o texto original desenhando um retângulo sólido sobre ele
+                        // 1. Se não for uma caixa nova, apagar o texto original na posição ORIGINAL (mesmo se o bloco foi movido)
                         if (!block.isCustom) {
+                            const origX = block.originalX !== undefined ? block.originalX : block.x;
+                            const origY = block.originalY !== undefined ? block.originalY : block.y;
+                            const origPdfYTop = pageHeight - origY;
                             const coverWidth = Math.max(block.width + 4, (block.originalText.length * block.originalFontSize * 0.55));
                             const coverHeight = block.height + 2;
 
                             pdfPage.drawRectangle({
-                                x: Math.max(0, block.x - 1),
-                                y: pdfYTop - coverHeight + (block.originalFontSize * 0.15),
+                                x: Math.max(0, origX - 1),
+                                y: origPdfYTop - coverHeight + (block.originalFontSize * 0.15),
                                 width: coverWidth,
                                 height: coverHeight,
                                 color: bgColor
                             });
                         }
 
-                        // 2. Desenhar o novo texto na mesma posição (caso não tenha sido apagado)
+                        // 2. Desenhar o novo texto na posição atual (block.x, block.y)
                         if (block.text && block.text.length > 0) {
                             const lines = block.text.split('\n');
                             lines.forEach((line, lineIdx) => {
